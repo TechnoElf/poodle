@@ -1,0 +1,15 @@
+[package]
+name = "poodle"
+version = "0.1.0"
+authors = ["TechnoElf <technoelf@undertheprinter.com>"]
+edition = "2018"
+
+[dependencies]
+reqwest = { version = "*", features = ["cookies", "blocking"] }
+kuchiki = "*"
+html-diff = "*"
+serenity = { version = "*", default-features = false, features = ["builder", "cache", "client", "gateway", "http", "model", "utils", "rustls_backend"] }
+tokio = { version = "*", features = ["sync"] }
+async-std = "*"
+rand = "*"
+config = "*"
