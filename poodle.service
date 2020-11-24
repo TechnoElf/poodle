@@ -1,0 +1,10 @@
+[Unit]
+Description=Poodle Discord Bot
+After=network.target
+
+[Service]
+ExecStart=/usr/bin/poodle
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
