@@ -2,6 +2,7 @@ use std::thread::sleep;
 use std::time::Duration;
 use std::sync::Arc;
 use std::collections::HashMap;
+use std::fs::read_to_string;
 
 use serenity::prelude::*;
 use serenity::async_trait;
@@ -21,8 +22,9 @@ use moodle::*;
 #[tokio::main]
 async fn main() {
     let mut conf = Config::default();
-    if let Err(_) = conf.merge(File::with_name("poodle.toml")) {
-        conf.merge(File::with_name("/etc/poodle/poodle.toml")).expect("Config file not found");
+    match read_to_string("./poodle.toml") {
+        Ok(c) => { conf.merge(File::from_str(&c, FileFormat::Toml)).unwrap(); },
+        Err(_) => { conf.merge(File::from_str(&read_to_string("/etc/poodle/poodle.toml").expect("Config file not found"), FileFormat::Toml)).unwrap(); }
     }
 
     let conf = Conf {
