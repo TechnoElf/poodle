@@ -113,7 +113,7 @@ impl EventHandler for Handler {
                                     eprintln!("Failed to fetch course data for {}", id)
                                 }
                             },
-                            Err(_) => eprintln!("Failed to access Moodle")
+                            Err(e) => eprintln!("Failed to access Moodle: {}", e)
                         }
                     }
                 }

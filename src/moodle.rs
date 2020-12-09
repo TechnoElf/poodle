@@ -10,7 +10,7 @@ pub struct MoodleContext {
 }
 
 impl MoodleContext {
-    pub async fn login(auth: &MoodleAuthConf) -> std::result::Result<Self, ()> {
+    pub async fn login(auth: &MoodleAuthConf) -> std::result::Result<Self, String> {
         match auth {
             MoodleAuthConf::ShibbolethUser(user, pass) => {
                 let client = reqwest::ClientBuilder::new()
@@ -19,8 +19,8 @@ impl MoodleContext {
 
                 let resp = client.get("https://www.moodle.tum.de/Shibboleth.sso/Login?providerId=https%3A%2F%2Ftumidp.lrz.de%2Fidp%2Fshibboleth&target=https%3A%2F%2Fwww.moodle.tum.de%2Fauth%2Fshibboleth%2Findex.php")
                     .header("Referer", "https://www.moodle.tum.de/")
-                    .send().await.or(Err(()))?;
-                let text = resp.text().await.or(Err(()))?;
+                    .send().await.or(Err(format!("Couldn't open login page")))?;
+                let text = resp.text().await.or(Err(format!("Couldn't get login page text")))?;
 
                 let url = format!("https://login.tum.de{}", text.split("form action=\"").collect::<Vec<_>>()[1].split("\"").collect::<Vec<_>>()[0]);
 
@@ -31,8 +31,8 @@ impl MoodleContext {
                 form.insert("_eventId_proceed", "");
                 let resp = client.post(&url)
                     .form(&form)
-                    .send().await.or(Err(()))?;
-                let text = resp.text().await.or(Err(()))?;
+                    .send().await.or(Err(format!("Couldn't send login form to {}", url)))?;
+                let text = resp.text().await.or(Err(format!("Couldn't get login form text")))?;
 
                 let relay_state = text.split("name=\"RelayState\" value=\"cookie&#x3a;").collect::<Vec<_>>()[1].split("\"").collect::<Vec<_>>()[0];
                 let relay_state = format!("cookie:{}", relay_state);
@@ -43,7 +43,7 @@ impl MoodleContext {
                 form.insert("SAMLResponse", saml_resp);
                 client.post("https://www.moodle.tum.de/Shibboleth.sso/SAML2/POST")
                     .form(&form)
-                    .send().await.or(Err(()))?;
+                    .send().await.or(Err(format!("Couldn't send token form")))?;
 
                 Ok(Self {
                     client
