@@ -6,59 +6,32 @@ use kuchiki::traits::*;
 use html_diff::{get_differences, Difference};
 
 pub struct MoodleContext {
-    client: reqwest::Client
+    auth: MoodleAuthConf,
+    state: MoodleState
+}
+
+pub enum MoodleState {
+    Unknown,
+    MaybeLoggedIn{ client: reqwest::Client },
 }
 
 impl MoodleContext {
-    pub async fn login(auth: &MoodleAuthConf) -> std::result::Result<Self, String> {
-        match auth {
-            MoodleAuthConf::ShibbolethUser(user, pass) => {
-                let client = reqwest::ClientBuilder::new()
-                    .cookie_store(true)
-                    .build().unwrap();
-
-                let resp = client.get("https://www.moodle.tum.de/Shibboleth.sso/Login?providerId=https%3A%2F%2Ftumidp.lrz.de%2Fidp%2Fshibboleth&target=https%3A%2F%2Fwww.moodle.tum.de%2Fauth%2Fshibboleth%2Findex.php")
-                    .header("Referer", "https://www.moodle.tum.de/")
-                    .send().await.or(Err(format!("Couldn't open login page")))?;
-                let text = resp.text().await.or(Err(format!("Couldn't get login page text")))?;
-
-                let url = format!("https://login.tum.de{}", text.split("form action=\"").collect::<Vec<_>>()[1].split("\"").collect::<Vec<_>>()[0]);
-
-                let mut form = HashMap::new();
-                form.insert("j_username", user.as_str());
-                form.insert("j_password", pass.as_str());
-                form.insert("donotcache", "1");
-                form.insert("_eventId_proceed", "");
-                let resp = client.post(&url)
-                    .form(&form)
-                    .send().await.or(Err(format!("Couldn't send login form to {}", url)))?;
-                let text = resp.text().await.or(Err(format!("Couldn't get login form text")))?;
-
-                let relay_state = text.split("name=\"RelayState\" value=\"cookie&#x3a;").collect::<Vec<_>>()[1].split("\"").collect::<Vec<_>>()[0];
-                let relay_state = format!("cookie:{}", relay_state);
-                let saml_resp = text.split("name=\"SAMLResponse\" value=\"").collect::<Vec<_>>()[1].split("\"").collect::<Vec<_>>()[0].to_string();
-
-                let mut form = HashMap::new();
-                form.insert("RelayState", relay_state);
-                form.insert("SAMLResponse", saml_resp);
-                client.post("https://www.moodle.tum.de/Shibboleth.sso/SAML2/POST")
-                    .form(&form)
-                    .send().await.or(Err(format!("Couldn't send token form")))?;
-
-                Ok(Self {
-                    client
-                })
-            }
+    pub fn new(auth: MoodleAuthConf) -> Self {
+        Self {
+            auth,
+            state: MoodleState::Unknown
         }
     }
 
-    pub async fn get(&self, id: u32) -> Option<MoodleCourseData> {
+    pub async fn get(&mut self, id: u32) -> Result<MoodleCourseData, MoodleErr> {
+        let client = self.verify_state().await?;
+
         let url = format!("https://www.moodle.tum.de/course/view.php?id={}", id);
-        let resp = self.client.get(&url).send().await.unwrap();
+        let resp = client.get(&url).send().await.or(Err(MoodleErr::Network))?;
         if resp.status() != 200 {
-            return None;
+            return Err(MoodleErr::CourseNotFound);
         }
-        let text = resp.text().await.unwrap();
+        let text = resp.text().await.or(Err(MoodleErr::Network))?;
         let html = parse_html().one(text);
 
         let mut content = String::new();
@@ -79,28 +52,105 @@ impl MoodleContext {
         }
 
         if &name != "" {
-            Some(MoodleCourseData {
+            Ok(MoodleCourseData {
                 id,
                 name,
                 url,
                 content
             })
         } else {
-            None
+            Err(MoodleErr::CourseNotFound)
         }
     }
 
-    pub async fn update(&self, origin: &mut MoodleCourseData) -> Option<String> {
-        if let Some(target) = self.get(origin.id()).await {
-            if target.content() != origin.content() {
-                let diff = origin.user_diff(&target);
-                origin.content = target.content;
-                diff
-            } else {
-                None
-            }
+    pub async fn update(&mut self, origin: &mut MoodleCourseData) -> Result<Option<String>, MoodleErr> {
+        let target = self.get(origin.id()).await?;
+        if target.content() != origin.content() {
+            let diff = origin.user_diff(&target);
+            origin.content = target.content;
+            Ok(diff)
         } else {
-            None
+            Ok(None)
+        }
+    }
+
+    async fn verify_state(&mut self) -> Result<reqwest::Client, MoodleErr> {
+        match &mut self.state {
+            MoodleState::Unknown => {
+                for _ in 0..3 {
+                    match self.try_login().await {
+                        Ok(client) => {
+                            self.state = MoodleState::MaybeLoggedIn{
+                                client: client.clone()
+                            };
+                            return Ok(client);
+                        },
+                        Err(e) => eprintln!("Login attempt failed: {:?}", e)
+                    }
+                }
+
+                Err(MoodleErr::Login)
+            },
+            MoodleState::MaybeLoggedIn{ client } => {
+                let resp = client.get("https://www.moodle.tum.de/").send().await.or(Err(MoodleErr::Network))?;
+                if resp.status() == 200 {
+                    Ok(client.clone())
+                } else {
+                    for _ in 0..3 {
+                        match self.try_login().await {
+                            Ok(client) => {
+                                self.state = MoodleState::MaybeLoggedIn{
+                                    client: client.clone()
+                                };
+                                return Ok(client);
+                            },
+                            Err(e) => eprintln!("Login attempt failed: {:?}", e)
+                        }
+                    }
+
+                    Err(MoodleErr::Login)
+                }
+            }
+        }
+    }
+
+    async fn try_login(&self) -> Result<reqwest::Client, MoodleErr> {
+        match &self.auth {
+            MoodleAuthConf::ShibbolethUser(user, pass) => {
+                let client = reqwest::ClientBuilder::new()
+                    .cookie_store(true)
+                    .build().unwrap();
+
+                let resp = client.get("https://www.moodle.tum.de/Shibboleth.sso/Login?providerId=https%3A%2F%2Ftumidp.lrz.de%2Fidp%2Fshibboleth&target=https%3A%2F%2Fwww.moodle.tum.de%2Fauth%2Fshibboleth%2Findex.php")
+                    .header("Referer", "https://www.moodle.tum.de/")
+                    .send().await.or(Err(MoodleErr::Network))?;
+                let text = resp.text().await.or(Err(MoodleErr::Network))?;
+
+                let url = format!("https://login.tum.de{}", text.split("form action=\"").collect::<Vec<_>>()[1].split("\"").collect::<Vec<_>>()[0]);
+
+                let mut form = HashMap::new();
+                form.insert("j_username", user.as_str());
+                form.insert("j_password", pass.as_str());
+                form.insert("donotcache", "1");
+                form.insert("_eventId_proceed", "");
+                let resp = client.post(&url)
+                    .form(&form)
+                    .send().await.or(Err(MoodleErr::Network))?;
+                let text = resp.text().await.or(Err(MoodleErr::Network))?;
+
+                let relay_state = text.split("name=\"RelayState\" value=\"cookie&#x3a;").collect::<Vec<_>>().get(1).ok_or(MoodleErr::Auth)?.split("\"").collect::<Vec<_>>()[0];
+                let relay_state = format!("cookie:{}", relay_state);
+                let saml_resp = text.split("name=\"SAMLResponse\" value=\"").collect::<Vec<_>>().get(1).ok_or(MoodleErr::Auth)?.split("\"").collect::<Vec<_>>()[0].to_string();
+
+                let mut form = HashMap::new();
+                form.insert("RelayState", relay_state);
+                form.insert("SAMLResponse", saml_resp);
+                client.post("https://www.moodle.tum.de/Shibboleth.sso/SAML2/POST")
+                    .form(&form)
+                    .send().await.or(Err(MoodleErr::Network))?;
+
+                Ok(client)
+            }
         }
     }
 }
@@ -203,4 +253,12 @@ fn test_moodle_course_diff() {
     let diff = origin.user_diff(&target).expect("Test files are identical");
 
     assert_eq!(diff, "New \"Datei\" uploaded: \"NEW CONTENT!\"\nNew \"Textseite\" uploaded: \"MORE CONTENT!\"\n");
+}
+
+#[derive(Debug)]
+pub enum MoodleErr {
+    Network,
+    Login,
+    CourseNotFound,
+    Auth
 }
