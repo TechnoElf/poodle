@@ -31,7 +31,9 @@ async fn main() {
     let conf = Conf {
         discord_token: conf.get_str("token").expect("Key \"token\" missing from config"),
         discord_client_id: conf.get_str("client").expect("Key \"client\" missing from config"),
-        responses: conf.get_array("responses").expect("Key \"responses\" missing from config").iter().map(|v| v.clone().into_str().expect("Expected text responses in config")).collect()
+        discord_channel_id: (conf.get_int("channel").expect("Key \"channel\" missing from config") as u64).into(),
+        course_ids: conf.get_array("courses").expect("Key \"courses\" missing from config").iter().map(|v| v.clone().into_str().expect("Expected string courses in config")).collect(),
+        responses: conf.get_array("responses").expect("Key \"responses\" missing from config").iter().map(|v| v.clone().into_str().expect("Expected string responses in config")).collect()
     };
 
     let mut client = Client::builder(conf.discord_token.clone()).event_handler(Handler::new(conf, auth)).await.expect("Failed to construct Discord client");
@@ -53,6 +55,25 @@ impl EventHandler for Handler {
         let context = self.context.clone();
         let subscribers = self.subscribers.clone();
         let conf = self.conf.clone();
+
+        for word in &conf.course_ids {
+            if let Ok(id) = word.parse() {
+                if let Ok(course) = context.lock().await.get(id).await {
+                    let mut subscribers = subscribers.lock().await;
+                    if subscribers.contains_key(&conf.discord_channel_id) {
+                        if let None = subscribers.get(&conf.discord_channel_id).unwrap().iter().position(|e| e.id() == id) {
+                            subscribers.get_mut(&conf.discord_channel_id).unwrap().push(course);
+                        }
+                    } else {
+                        subscribers.insert(conf.discord_channel_id, vec![course]);
+                    }
+
+                    println!("Channel {} is watching course {}", conf.discord_channel_id, id);
+                } else {
+                    eprintln!("Failed to fetch course data for {}", id)
+                }
+            }
+        }
 
         tokio::spawn(async move { loop {
             for (channel, cache) in subscribers.lock().await.iter_mut() {
@@ -208,5 +229,7 @@ fn get_resp(conf: &Conf) -> &str {
 struct Conf {
     discord_token: String,
     discord_client_id: String,
+    discord_channel_id: ChannelId,
+    course_ids: Vec<String>,
     responses: Vec<String>
 }
