@@ -128,7 +128,14 @@ impl MoodleContext {
 
                 let url = format!("https://login.tum.de{}", text.split("form action=\"").collect::<Vec<_>>()[1].split("\"").collect::<Vec<_>>()[0]);
 
+                let resp = client.get(&url)
+                    .send().await.or(Err(MoodleErr::Network))?;
+                let text = resp.text().await.or(Err(MoodleErr::Network))?;
+
+                let csrf_token = text.split("name=\"csrf_token\" value=\"").collect::<Vec<_>>().get(1).ok_or(MoodleErr::Auth)?.split("\"").collect::<Vec<_>>()[0];
+
                 let mut form = HashMap::new();
+                form.insert("csrf_token", csrf_token);
                 form.insert("j_username", user.as_str());
                 form.insert("j_password", pass.as_str());
                 form.insert("donotcache", "1");
