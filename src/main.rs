@@ -1,5 +1,3 @@
-use std::thread::sleep;
-use std::time::Duration;
 use std::sync::Arc;
 use std::collections::HashMap;
 use std::fs::read_to_string;
@@ -11,6 +9,7 @@ use serenity::model::channel::*;
 use serenity::model::id::*;
 
 use tokio::sync::Mutex;
+use tokio::time::{sleep, Duration};
 
 use rand::{thread_rng, Rng};
 
@@ -96,7 +95,7 @@ impl EventHandler for Handler {
                 }
             }
 
-            sleep(Duration::from_secs_f32(300.0));
+            sleep(Duration::from_secs_f32(300.0)).await;
         }});
     }
 
@@ -115,8 +114,8 @@ impl EventHandler for Handler {
             if cmd == "watch" && words.len() >= 3 {
                 for word in words[2..].iter() {
                     if let Ok(id) = word.parse() {
+                        let mut subscribers = subscribers.lock().await;
                         if let Ok(course) = context.lock().await.get(id).await {
-                            let mut subscribers = subscribers.lock().await;
                             if subscribers.contains_key(&msg.channel_id) {
                                 if let None = subscribers.get(&msg.channel_id).unwrap().iter().position(|e| e.id() == id) {
                                     subscribers.get_mut(&msg.channel_id).unwrap().push(course);
@@ -156,7 +155,7 @@ impl EventHandler for Handler {
                     }
 
                     tokio::spawn(async move {
-                        sleep(Duration::from_secs(time));
+                        sleep(Duration::from_secs(time)).await;
 
                         if let Err(e) = msg.channel_id.say(&ctx.http, format!("{} (timer done)", get_resp(&conf))).await {
                             eprintln!("Error sending message: {}", e);
@@ -175,7 +174,7 @@ impl EventHandler for Handler {
                 }
 
                 for i in 0..groups.len() {
-                    let j = thread_rng().gen_range(0, groups.len());
+                    let j = thread_rng().gen_range(0..groups.len());
                     perm[i % group_count].push(groups.remove(j));
                 }
 
@@ -223,7 +222,7 @@ impl Handler {
 }
 
 fn get_resp(conf: &Conf) -> &str {
-    conf.responses.get(thread_rng().gen_range(0, conf.responses.len())).expect("Expected at least one response text")
+    conf.responses.get(thread_rng().gen_range(0..conf.responses.len())).expect("Expected at least one response text")
 }
 
 struct Conf {

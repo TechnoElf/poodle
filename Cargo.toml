@@ -9,7 +9,7 @@ reqwest = { version = "*", features = ["cookies", "blocking"] }
 kuchiki = "*"
 html-diff = "*"
 serenity = { version = "*", default-features = false, features = ["builder", "cache", "client", "gateway", "http", "model", "utils", "rustls_backend"] }
-tokio = { version = "*", features = ["sync"] }
+tokio = { version = "*", features = ["rt", "sync", "time"] }
 async-std = "*"
 rand = "*"
 config = "*"
