@@ -5,7 +5,7 @@ authors = ["TechnoElf <technoelf@undertheprinter.com>"]
 edition = "2018"
 
 [dependencies]
-reqwest = { version = "*", features = ["cookies", "blocking"] }
+reqwest = { version = "*", default-features = false, features = ["cookies", "blocking", "rustls-tls"] }
 kuchiki = "*"
 html-diff = "*"
 serenity = { version = "*", default-features = false, features = ["builder", "cache", "client", "gateway", "http", "model", "utils", "rustls_backend"] }
