@@ -7,6 +7,7 @@ use serenity::async_trait;
 use serenity::model::gateway::Ready;
 use serenity::model::channel::*;
 use serenity::model::id::*;
+use serenity::utils::Colour;
 
 use tokio::sync::Mutex;
 use tokio::time::{sleep, Duration};
@@ -204,6 +205,22 @@ impl EventHandler for Handler {
 
                 if let Err(e) = msg.channel_id.say(&ctx.http, format!("{} (created group with {} members)", get_resp(&conf), groups.len())).await {
                     eprintln!("Error sending message: {}", e);
+                }
+            } else if cmd == "send" && words.len() >= 3 {
+                let text = words[2..].join(" ");
+                for (channel, _) in subscribers.lock().await.iter_mut() {
+                    println!("User {} ({}) sent message \"{}\" to channel {}", msg.author.name, msg.author, text, channel);
+                    if let Err(e) = channel.send_message(&ctx.http, |m| {
+                        m.embed(|e| {
+                            e.title("PSA");
+                            e.colour(Colour::GOLD);
+                            e.description(format!("{}\n\n{}", text, get_resp(&conf)));
+                            e
+                        });
+                        m
+                    }).await {
+                        eprintln!("Error sending message: {}", e);
+                    }
                 }
             }
         }
